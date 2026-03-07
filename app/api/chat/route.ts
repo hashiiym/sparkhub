@@ -1,48 +1,22 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { OpenAI } from "openai";
 import { CosmosClient } from "@azure/cosmos";
-import { SearchClient, AzureKeyCredential } from "@azure/search-documents";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // Helper to get clients lazily
 function getClients() {
-    // 1. Groq / OpenAI
-    const apiKey = process.env.GROQ_API_KEY || "";
-    // Check for xAI prefix to help user or auto-fallback
-    const baseURL = apiKey.startsWith("xai-")
-        ? "https://api.x.ai/v1"
-        : "https://api.groq.com/openai/v1";
+    // 1. Gemini
+    const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY || "";
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-    const groq = new OpenAI({
-        baseURL,
-        apiKey,
-    });
-
-    // 2. Azure Search
-    let searchClient = null;
-    const searchEndpoint = process.env.AZURE_SEARCH_ENDPOINT;
-    const searchKey = process.env.AZURE_SEARCH_ADMIN_KEY;
-    if (searchEndpoint && searchKey) {
-        try {
-            searchClient = new SearchClient(
-                searchEndpoint,
-                "vhse-career-index",
-                new AzureKeyCredential(searchKey)
-            );
-        } catch (e) {
-            console.error("Failed to init Search Client:", e);
-        }
-    }
-
-    // 3. Cosmos DB
+    // 2. Cosmos DB
     let cosmosClient = null;
     const connectionString = process.env.COSMOS_CONNECTION_STRING;
 
     // Debug logging (masked)
     console.log("Config Check:");
-    console.log("- Groq Key:", apiKey ? `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}` : "MISSING");
-    console.log("- Base URL:", baseURL);
-    console.log("- Search EP:", searchEndpoint);
+    console.log("- Gemini Key:", apiKey ? `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}` : "MISSING");
 
     // Combined logic: Prefer Connection String, fallback to legacy
     if (connectionString && connectionString.includes("AccountKey=")) {
@@ -63,7 +37,7 @@ function getClients() {
         }
     }
 
-    return { groq, searchClient, cosmosClient };
+    return { model, cosmosClient };
 }
 
 export async function POST(req: Request) {
@@ -78,69 +52,37 @@ export async function POST(req: Request) {
         const userQuery = lastMessage.content;
 
         // Init clients inside request to capture config errors safely
-        const { groq, searchClient, cosmosClient } = getClients();
+        const { model, cosmosClient } = getClients();
 
-        // 1. Retrieve Context from Azure AI Search
-        console.log(`Searching for: ${userQuery}`);
-        let searchContext = "";
+        // 1. Construct System Prompt
+        const systemPrompt = `You are SparkHub, a career counselor for 10th-grade students.
+PHASE 1: Ask 3-4 specific questions one-by-one to identify the user's interests, hobbies, and favorite subjects.
+PHASE 2: Once the user provides enough detail, generate a comprehensive 6-year career roadmap.
 
-        interface CareerDoc {
-            title: string;
-            content: string;
-            url?: string;
-        }
+Years 1-2: Specific 11th/12th grade stream and entrance exam focus.
 
-        if (searchClient) {
-            try {
-                const searchResults = await searchClient.search(userQuery, {
-                    top: 3,
-                    select: ["content", "title", "url"]
-                });
+Years 3-6: Recommended Degree, specific skill-building milestones, and internships.
 
-                for await (const result of searchResults.results) {
-                    const doc = result.document as unknown as CareerDoc;
-                    const title = doc.title || "No Title";
-                    const content = doc.content || "";
-                    searchContext += `Title: ${title}\nContent: ${content}\n\n`;
-                }
-            } catch (searchError) {
-                console.error("Azure Search Error:", searchError);
-                searchContext = "Context retrieval failed (Search Error).";
-            }
-        } else {
-            console.warn("Search Client not initialized (Missing Config).");
-            searchContext = "Context retrieval unavailable (Configuration Missing).";
-        }
+Keep the tone encouraging and professional.`;
 
-        // 2. Construct System Prompt with Context
-        const systemPrompt = `You are Sparkbot, a helpful career guidance counselor for students in Kerala.
-        
-Context from Knowledge Base:
-${searchContext}
-
-Use the above context to answer the user's question. If the answer is not in the context, use your general knowledge but mention that it's outside the specific VHSE database. Keep answers relevant to Kerala/Indian education context when possible.`;
-
-        // Clean messages for Groq/Llama
-        // Remove 'id', 'revisionId' or other Clerk/DB artifacts that might be in the request object
-        // Only keep 'role' and 'content' as strictly expected by OpenAI/Groq API
-        const cleanMessages = messages.map((m: any) => ({
-            role: m.role,
-            content: m.content
+        // Configure Gemini messages format. Gemini expects an array of { role: 'user' | 'model', parts: [{ text: string }] }
+        // The messages array from request might be in OpenAI format: { role: 'user' | 'assistant', content: string }
+        // We need to map 'assistant' to 'model'
+        const history = messages.slice(0, -1).filter((m: any) => m.role !== "system").map((m: any) => ({
+            role: m.role === "assistant" ? "model" : m.role,
+            parts: [{ text: m.content }]
         }));
 
-        // 3. Generate Response
-        const response = await groq.chat.completions.create({
-            messages: [
-                { role: "system", content: systemPrompt },
-                ...cleanMessages
-            ],
-            // Use user preferred model or safe default
-            model: "llama-3.3-70b-versatile",
+        // 2. Generate Response
+        const chat = model.startChat({
+            systemInstruction: systemPrompt,
+            history: history,
         });
 
-        const aiMessageContent = response.choices[0].message.content;
+        const result = await chat.sendMessage(userQuery);
+        const aiMessageContent = result.response.text();
 
-        // 4. Persist to Cosmos DB
+        // 3. Persist to Cosmos DB
         if (cosmosClient) {
             try {
                 const database = cosmosClient.database(process.env.COSMOS_DB_DATABASE || "SparkhubDB");
@@ -151,9 +93,8 @@ Use the above context to answer the user's question. If the answer is not in the
                     userId: userId,
                     userMessage: userQuery,
                     aiResponse: aiMessageContent,
-                    searchContext: searchContext,
                     timestamp: new Date().toISOString(),
-                    model: "llama-3.3-70b-versatile"
+                    model: "gemini-2.5-flash"
                 };
 
                 await container.items.create(record);

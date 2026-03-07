@@ -13,7 +13,7 @@ interface Message {
 
 export default function ChatInterface() {
     const [messages, setMessages] = useState<Message[]>([
-        { id: 1, role: "assistant", content: "Hello! I'm **Sparkbot**. I'm here to help you with career guidance, aptitude testing, or any other questions you have.  \n\n*Ready to unlock your potential?*" },
+        { id: 1, role: "assistant", content: "Hey! I'm SparkHub. Before we build your 6-year future, tell me: Which subject makes you lose track of time because you're so interested in it?" },
     ]);
     const [input, setInput] = useState("");
     const [isTyping, setIsTyping] = useState(false);
@@ -53,7 +53,7 @@ export default function ChatInterface() {
             console.error("Chat Error:", error);
             setMessages((prev) => [
                 ...prev,
-                { id: Date.now() + 1, role: "assistant", content: "I'm currently unable to connect to my neural network (Azure). Please check your internet connection or API keys." }
+                { id: Date.now() + 1, role: "assistant", content: "I'm currently unable to connect to my neural network. Please check your internet connection or API keys." }
             ]);
         } finally {
             setIsTyping(false);
@@ -80,7 +80,7 @@ export default function ChatInterface() {
                                 {msg.role === "assistant" && (
                                     <div className="flex items-center gap-2 mb-2">
                                         <Sparkles size={14} className="text-yellow-400" />
-                                        <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Sparkbot</span>
+                                        <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">SparkHub</span>
                                     </div>
                                 )}
                                 {msg.role === "assistant" ? (
@@ -116,7 +116,7 @@ export default function ChatInterface() {
                     <input
                         type="text"
                         className="w-full bg-transparent text-white p-4 pl-6 outline-none placeholder-gray-600"
-                        placeholder="Ask Sparkbot anything..."
+                        placeholder="Ask SparkHub anything..."
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && handleSend()}
