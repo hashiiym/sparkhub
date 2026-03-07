@@ -82,7 +82,10 @@ Keep the tone encouraging and professional.`;
 
         // 2. Generate Response
         const chat = model.startChat({
-            systemInstruction: systemPrompt,
+            systemInstruction: {
+                role: "system",
+                parts: [{ text: systemPrompt }]
+            },
             history: history,
         });
 
