@@ -1,6 +1,13 @@
 import ChatInterface from "../components/ChatInterface";
+import { auth } from '@clerk/nextjs/server';
+import { redirect } from 'next/navigation';
 
-export default function ChatPage() {
+export default async function ChatPage() {
+    const { userId } = await auth();
+    if (!userId) {
+        redirect('/');
+    }
+
     return (
         <div className="flex flex-col min-h-screen bg-black">
             <header className="fixed top-0 w-full z-50 bg-black/80 backdrop-blur-md border-b border-white/5">
