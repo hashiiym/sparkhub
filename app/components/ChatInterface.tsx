@@ -47,7 +47,7 @@ export default function ChatInterface() {
                     if (data.log && data.log.length > 0) {
                         const historyMessages: Message[] = [];
                         let counter = Date.now() - data.log.length * 1000;
-                        data.log.forEach((record: any) => {
+                        data.log.forEach((record: { user_message: string; ai_response: string }) => {
                             historyMessages.push({ id: counter++, role: "user", content: record.user_message });
                             historyMessages.push({ id: counter++, role: "assistant", content: record.ai_response });
                         });
@@ -120,14 +120,14 @@ export default function ChatInterface() {
                     entrance_exams: [],
                     target_colleges: [],
                     skill_development: [],
-                    timeline: parsed.roadmap.map((item: any) => ({
+                    timeline: parsed.roadmap.map((item: { year?: number; phase_name?: string; focus?: string; milestones?: string[] }) => ({
                         phase_name: `Year ${item.year || item.phase_name || "Phase"}`,
                         focus: item.focus || "",
                         milestones: item.milestones || []
                     }))
                 };
             }
-        } catch (e) {
+        } catch {
             return null;
         }
         return null;

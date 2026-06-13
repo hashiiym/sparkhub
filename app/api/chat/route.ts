@@ -41,10 +41,10 @@ export async function GET() {
         }
 
         return NextResponse.json({ log: data || [] });
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("API GET Error:", error);
         return NextResponse.json(
-            { error: error.message || "Internal Server Error" },
+            { error: error instanceof Error ? error.message : "Internal Server Error" },
             { status: 500 }
         );
     }
@@ -120,18 +120,18 @@ The JSON must exactly follow this schema:
 
         // Map messages: Map incoming client message roles to standard ChatCompletion blocks
         // e.g., frontend 'ai' or 'assistant' maps to 'assistant'
-        const mappedMessages = messages.map((m: any) => ({
+        const mappedMessages = messages.map((m: { role: string; content: string }) => ({
             role: m.role === "ai" || m.role === "assistant" ? "assistant" : "user",
             content: m.content
         }));
 
-        const chatCompletionMessages = [
+        const chatCompletionMessages: { role: "system" | "user" | "assistant", content: string }[] = [
             { role: "system", content: systemPrompt },
             ...mappedMessages
         ];
 
         const completion = await groq.chat.completions.create({
-            messages: chatCompletionMessages as any,
+            messages: chatCompletionMessages,
             model: "llama-3.3-70b-versatile",
             temperature: 0.7,
             max_completion_tokens: 1500,
@@ -155,10 +155,10 @@ The JSON must exactly follow this schema:
 
         return NextResponse.json({ message: aiResponse });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("API POST Error:", error);
         return NextResponse.json(
-            { error: error.message || "Internal Server Error" },
+            { error: error instanceof Error ? error.message : "Internal Server Error" },
             { status: 500 }
         );
     }
