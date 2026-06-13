@@ -1,6 +1,6 @@
 "use client";
 
-import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/nextjs";
+import { Show, SignInButton, UserButton } from "@clerk/nextjs";
 import Hero from "./components/Hero";
 import ChatInterface from "./components/ChatInterface";
 import StaggeredMenu from "./components/StaggeredMenu";
@@ -28,16 +28,16 @@ export default function Home() {
               EN / ML
             </button>
 
-            <SignedOut>
+            <Show when="signed-out">
               <SignInButton mode="modal">
                 <button className="text-sm font-medium text-white bg-white/10 px-4 py-2 rounded-full hover:bg-white/20 transition-colors">
                   Sign In
                 </button>
               </SignInButton>
-            </SignedOut>
-            <SignedIn>
+            </Show>
+            <Show when="signed-in">
               <UserButton />
-            </SignedIn>
+            </Show>
 
             <div className="w-px h-6 bg-gray-800 mx-2 hidden md:block"></div>
             <StaggeredMenu />
