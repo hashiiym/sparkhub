@@ -2,125 +2,161 @@ export const runtime = 'nodejs';
 
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { CosmosClient } from "@azure/cosmos";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import Groq from "groq-sdk";
+import { createClient } from "@supabase/supabase-js";
 
-// Helper to get clients lazily
+// Initialize Clients
 function getClients() {
-    // 1. Gemini
-    const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY || "";
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-    // 2. Cosmos DB
-    let cosmosClient = null;
-    const connectionString = process.env.COSMOS_CONNECTION_STRING;
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
-    // Debug logging (masked)
-    console.log("Config Check:");
-    console.log("- Gemini Key:", apiKey ? `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}` : "MISSING");
+    // Use service role key to bypass RLS
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Combined logic: Prefer Connection String, fallback to legacy
-    if (connectionString && connectionString.includes("AccountKey=")) {
-        try {
-            cosmosClient = new CosmosClient(connectionString);
-        } catch (e) {
-            console.error("Invalid Cosmos Connection String:", e);
+    return { groq, supabase };
+}
+
+export async function GET() {
+    try {
+        const authResult = await auth();
+        const userId = authResult?.userId;
+
+        if (!userId) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
-    } else {
-        const endpoint = process.env.COSMOS_DB_ENDPOINT;
-        const key = process.env.COSMOS_DB_KEY;
-        if (endpoint && key) {
-            try {
-                cosmosClient = new CosmosClient({ endpoint, key });
-            } catch (e) {
-                console.error("Invalid Cosmos Endpoint/Key:", e);
-            }
+
+        const { supabase } = getClients();
+
+        const { data, error } = await supabase
+            .from("conversations")
+            .select("user_message, ai_response, created_at")
+            .eq("user_id", userId)
+            .order("created_at", { ascending: true });
+
+        if (error) {
+            console.error("Supabase GET Error:", error);
+            return NextResponse.json({ error: "Failed to fetch conversation history" }, { status: 500 });
         }
+
+        return NextResponse.json({ log: data || [] });
+    } catch (error: any) {
+        console.error("API GET Error:", error);
+        return NextResponse.json(
+            { error: error.message || "Internal Server Error" },
+            { status: 500 }
+        );
     }
-
-    return { model, cosmosClient };
 }
 
 export async function POST(req: Request) {
     try {
-        let userId = null;
-        try {
-            const authResult = await auth();
-            userId = authResult?.userId;
-        } catch (authErr) {
-            console.warn("Clerk Auth Error (likely missing secret keys). Using fallback user.");
-        }
+        const authResult = await auth();
+        const userId = authResult?.userId;
 
         if (!userId) {
-            userId = "anonymous-user"; // Fallback to allow testing without Clerk secrets
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         const { messages } = await req.json();
         const lastMessage = messages[messages.length - 1];
         const userQuery = lastMessage.content;
 
-        // Init clients inside request to capture config errors safely
-        const { model, cosmosClient } = getClients();
+        const { groq, supabase } = getClients();
 
-        // 1. Construct System Prompt
-        const systemPrompt = `You are SparkHub, a career counselor for 10th-grade students.
-PHASE 1: Ask 3-4 specific questions one-by-one to identify the user's interests, hobbies, and favorite subjects.
-PHASE 2: Once the user provides enough detail, generate a comprehensive 6-year career roadmap.
+        const systemPrompt = `You are "SparkHub," an elite, highly empathetic, and patient academic and career strategist tailored for the Indian education system. Your goal is to guide students to their highest potential through active listening and deep exploration.
 
-Years 1-2: Specific 11th/12th grade stream and entrance exam focus.
+You operate in a strict THREE-PHASE system. You must NEVER let the user know about these phases. You must transition naturally.
 
-Years 3-6: Recommended Degree, specific skill-building milestones, and internships.
+### PHASE 1: DEEP DISCOVERY & EMPATHY
+Your objective is to understand the student's mind, not just their grade. 
+1. Ask exactly ONE question at a time. Keep it conversational, warm, and highly empathetic.
+2. Discover their academic stage (Grade/College Year), home state, and core interests.
+3. If they give vague answers (e.g., "I like engineering but don't know which one"), DO NOT rush to conclusions. Dig deeper. Ask about their hobbies, what problems they want to solve in the world, or whether they prefer coding, building physical things, or designing.
 
-Keep the tone encouraging and professional.`;
+### PHASE 2: CAREER MATCHMAKING (CRITICAL STEP)
+Once you understand their interests, DO NOT generate the roadmap yet. 
+1. Present 2 or 3 specific, exciting career paths tailored to their answers. (e.g., "Based on your love for physics and building things, we could look at 1) Mechatronics, 2) Electronics & Communication, or 3) Aerospace.")
+2. Briefly explain what each path actually does in the real world.
+3. ASK THE USER: "Which of these directions sounds the most exciting to you?"
+4. You MUST wait for the user to pick a path or agree on a direction before moving to Phase 3.
 
-        // Configure Gemini messages format. Gemini expects an array of { role: 'user' | 'model', parts: [{ text: string }] }
-        // The messages array from request might be in OpenAI format: { role: 'user' | 'assistant', content: string }
-        // We need to map 'assistant' to 'model'
-        const history = messages.slice(0, -1).filter((m: any) => m.role !== "system").map((m: any) => ({
-            role: m.role === "assistant" ? "model" : m.role,
-            parts: [{ text: m.content }]
+### PHASE 3: THE BLUEPRINT TRIGGER
+ONLY trigger this phase AFTER the user has explicitly chosen or agreed to a specific career path from Phase 2.
+Once triggered, STOP asking questions and generate the master career blueprint. 
+
+CRITICAL INSTRUCTION: Your Phase 3 response MUST be output strictly as a valid JSON object. Do NOT wrap it in markdown code blocks (no \`\`\`json). Do not include any conversational text before or after the JSON.
+
+The JSON must exactly follow this schema:
+{
+  "profile_summary": "A 2-sentence empowering analytical summary of the student's potential based on everything they shared.",
+  "recommended_paths": ["The specific path they chose", "A closely related secondary path"],
+  "academic_strategy": {
+    "key_subjects": ["Subject 1", "Subject 2"],
+    "focus_areas": "Specific high-yield concepts to master right now for their chosen path."
+  },
+  "entrance_exams": ["Primary Exam (e.g., JEE Main/Advanced)", "State Exam (e.g., KEAM)"],
+  "target_colleges": ["Top-Tier Option", "State/Realistic Option", "Safe Option"],
+  "skill_development": ["Technical Skill 1", "Technical Skill 2", "Soft Skill 1"],
+  "timeline": [
+    {
+      "phase_name": "Immediate Phase (e.g., 10th-12th Prep)",
+      "focus": "Core structural target for this timeline window.",
+      "milestones": ["Milestone 1", "Milestone 2"]
+    },
+    {
+      "phase_name": "College Entry & Foundation (Years 1-2)",
+      "focus": "Acclimatization, basic building, and networking.",
+      "milestones": ["Join technical/entrepreneurship clubs", "Build a specific starter project"]
+    },
+    {
+      "phase_name": "Specialization & Transition (Years 3-4)",
+      "focus": "Core industry alignment and placement strategy.",
+      "milestones": ["Advanced ecosystem project", "Resume mapping and internships"]
+    }
+  ]
+}`;
+
+        // Map messages: Map incoming client message roles to standard ChatCompletion blocks
+        // e.g., frontend 'ai' or 'assistant' maps to 'assistant'
+        const mappedMessages = messages.map((m: any) => ({
+            role: m.role === "ai" || m.role === "assistant" ? "assistant" : "user",
+            content: m.content
         }));
 
-        // 2. Generate Response
-        const chat = model.startChat({
-            systemInstruction: {
-                role: "system",
-                parts: [{ text: systemPrompt }]
-            },
-            history: history,
+        const chatCompletionMessages = [
+            { role: "system", content: systemPrompt },
+            ...mappedMessages
+        ];
+
+        const completion = await groq.chat.completions.create({
+            messages: chatCompletionMessages as any,
+            model: "llama-3.3-70b-versatile",
+            temperature: 0.7,
+            max_completion_tokens: 1500,
+            top_p: 1,
         });
 
-        const result = await chat.sendMessage(userQuery);
-        const aiMessageContent = result.response.text();
+        const aiResponse = completion.choices[0]?.message?.content || "";
 
-        // 3. Persist to Cosmos DB
-        if (cosmosClient) {
-            try {
-                const database = cosmosClient.database(process.env.COSMOS_DB_DATABASE || "SparkhubDB");
-                const container = database.container(process.env.COSMOS_DB_CONTAINER || "Conversations");
+        // Persist to Supabase
+        const { error } = await supabase
+            .from("conversations")
+            .insert({
+                user_id: userId,
+                user_message: userQuery,
+                ai_response: aiResponse,
+            });
 
-                const record = {
-                    id: `${userId}-${Date.now()}`,
-                    userId: userId,
-                    userMessage: userQuery,
-                    aiResponse: aiMessageContent,
-                    timestamp: new Date().toISOString(),
-                    model: "gemini-2.5-flash"
-                };
-
-                await container.items.create(record);
-            } catch (dbError) {
-                console.error("Cosmos DB Write Error:", dbError);
-            }
-        } else {
-            console.warn("Cosmos Client not initialized. Skipping persistence.");
+        if (error) {
+            console.error("Supabase Insert Error:", error);
         }
 
-        return NextResponse.json({ message: aiMessageContent });
+        return NextResponse.json({ message: aiResponse });
 
     } catch (error: any) {
-        console.error("API Error:", error);
+        console.error("API POST Error:", error);
         return NextResponse.json(
             { error: error.message || "Internal Server Error" },
             { status: 500 }
