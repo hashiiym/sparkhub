@@ -145,32 +145,40 @@ The JSON must exactly follow this schema:
             ...mappedMessages
         ];
 
-        const primaryModel = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
-        let completion;
-        try {
-            completion = await groq.chat.completions.create({
-                messages: chatCompletionMessages,
-                model: primaryModel,
-                temperature: 0.7,
-                max_completion_tokens: 1500,
-                top_p: 1,
-            });
-        } catch (groqErr) {
-            console.warn(`Model ${primaryModel} failed, trying fallback to llama-3.1-8b-instant:`, groqErr);
-            if (primaryModel !== "llama-3.1-8b-instant") {
-                completion = await groq.chat.completions.create({
+        const candidateModels = [
+            process.env.GROQ_MODEL,
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "qwen/qwen3.8-27b",
+            "llama-3.1-8b-instant",
+            "llama-3.3-70b-versatile"
+        ].filter(Boolean) as string[];
+
+        let aiResponse = "";
+        let lastError: unknown = null;
+
+        for (const model of candidateModels) {
+            try {
+                const completion = await groq.chat.completions.create({
                     messages: chatCompletionMessages,
-                    model: "llama-3.1-8b-instant",
+                    model: model,
                     temperature: 0.7,
                     max_completion_tokens: 1500,
                     top_p: 1,
                 });
-            } else {
-                throw groqErr;
+                aiResponse = completion.choices[0]?.message?.content || "";
+                if (aiResponse) {
+                    break;
+                }
+            } catch (err) {
+                lastError = err;
+                console.warn(`Groq model ${model} failed, trying next candidate:`, err);
             }
         }
 
-        const aiResponse = completion.choices[0]?.message?.content || "";
+        if (!aiResponse) {
+            throw lastError || new Error("Failed to receive a response from Groq.");
+        }
 
         // Persist to Supabase if configured
         if (supabase) {
