@@ -145,13 +145,30 @@ The JSON must exactly follow this schema:
             ...mappedMessages
         ];
 
-        const completion = await groq.chat.completions.create({
-            messages: chatCompletionMessages,
-            model: "llama-3.3-70b-versatile",
-            temperature: 0.7,
-            max_completion_tokens: 1500,
-            top_p: 1,
-        });
+        const primaryModel = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+        let completion;
+        try {
+            completion = await groq.chat.completions.create({
+                messages: chatCompletionMessages,
+                model: primaryModel,
+                temperature: 0.7,
+                max_completion_tokens: 1500,
+                top_p: 1,
+            });
+        } catch (groqErr) {
+            console.warn(`Model ${primaryModel} failed, trying fallback to llama-3.1-8b-instant:`, groqErr);
+            if (primaryModel !== "llama-3.1-8b-instant") {
+                completion = await groq.chat.completions.create({
+                    messages: chatCompletionMessages,
+                    model: "llama-3.1-8b-instant",
+                    temperature: 0.7,
+                    max_completion_tokens: 1500,
+                    top_p: 1,
+                });
+            } else {
+                throw groqErr;
+            }
+        }
 
         const aiResponse = completion.choices[0]?.message?.content || "";
 
