@@ -92,9 +92,12 @@ export default function ChatInterface() {
             setMessages((prev) => [...prev, { id: Date.now() + 1, role: "assistant", content: data.message }]);
         } catch (error) {
             console.error("Chat Error:", error);
+            const errorMessage = error instanceof Error && error.message
+                ? error.message
+                : "I'm currently unable to connect to my neural network. Please check your internet connection or API keys.";
             setMessages((prev) => [
                 ...prev,
-                { id: Date.now() + 1, role: "assistant", content: "I'm currently unable to connect to my neural network. Please check your internet connection or API keys." }
+                { id: Date.now() + 1, role: "assistant", content: errorMessage }
             ]);
         } finally {
             setIsTyping(false);

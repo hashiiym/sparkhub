@@ -7,13 +7,24 @@ import { createClient } from "@supabase/supabase-js";
 
 // Initialize Clients
 function getClients() {
-    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+        throw new Error("GROQ_API_KEY is missing in environment variables. Please add GROQ_API_KEY to your Vercel Project Settings.");
+    }
+
+    const groq = new Groq({ apiKey });
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
-    // Use service role key to bypass RLS
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    let supabase = null;
+    if (supabaseUrl && supabaseServiceKey) {
+        try {
+            supabase = createClient(supabaseUrl, supabaseServiceKey);
+        } catch (err) {
+            console.warn("Failed to initialize Supabase client:", err);
+        }
+    }
 
     return { groq, supabase };
 }
@@ -28,6 +39,10 @@ export async function GET() {
         }
 
         const { supabase } = getClients();
+
+        if (!supabase) {
+            return NextResponse.json({ log: [] });
+        }
 
         const { data, error } = await supabase
             .from("conversations")
@@ -140,17 +155,19 @@ The JSON must exactly follow this schema:
 
         const aiResponse = completion.choices[0]?.message?.content || "";
 
-        // Persist to Supabase
-        const { error } = await supabase
-            .from("conversations")
-            .insert({
-                user_id: userId,
-                user_message: userQuery,
-                ai_response: aiResponse,
-            });
+        // Persist to Supabase if configured
+        if (supabase) {
+            const { error } = await supabase
+                .from("conversations")
+                .insert({
+                    user_id: userId,
+                    user_message: userQuery,
+                    ai_response: aiResponse,
+                });
 
-        if (error) {
-            console.error("Supabase Insert Error:", error);
+            if (error) {
+                console.error("Supabase Insert Error:", error);
+            }
         }
 
         return NextResponse.json({ message: aiResponse });
